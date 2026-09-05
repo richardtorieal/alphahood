@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alphahood"
+version = "0.1.0"
+description = "Agentic trading system using Robinhood MCP and Gemini"
+authors = [
+    {name = "Richard Anderson", email = "richard@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "yfinance",
+    "vectorbt",
+    "backtrader",
+    "pandas",
+    "numpy",
+    "pyyaml",
+    "python-dotenv",
+    "requests",
+    "apscheduler",
+    "google-genai",
+    "scipy"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8"
+]
