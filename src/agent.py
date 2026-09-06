@@ -370,7 +370,13 @@ def main():
     parser.add_argument("--paper", action="store_true", default=True, help="Paper trading mode (default)")
     parser.add_argument("--live", action="store_true", help="Live trading mode (⚠️ real money)")
     parser.add_argument("--daemon", action="store_true", help="Start full daemon with all scheduled tasks")
+    parser.add_argument("--link-robinhood", "--setup-auth", action="store_true", help="Run 1-time Robinhood MCP OAuth PKCE account linking setup")
     args = parser.parse_args()
+
+    if args.link_robinhood:
+        from .auth_setup import run_oauth_flow
+        run_oauth_flow()
+        return
 
     paper_mode = not args.live
     agent = AlphaHoodAgent(paper_mode=paper_mode)
