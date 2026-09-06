@@ -17,11 +17,19 @@ class Quote:
 class MarketDataProvider:
     def __init__(self):
         self.cache: Dict[str, dict] = {}
+        self.ohlcv_cache: Dict[str, dict] = {}
         self.CACHE_TTL = 60  # seconds
 
     def get_ohlcv(self, symbol: str, period: str = "1mo", interval: str = "1d") -> pd.DataFrame:
+        now = time.time()
+        cache_key = f"{symbol}_{period}_{interval}"
+        if cache_key in self.ohlcv_cache and (now - self.ohlcv_cache[cache_key]['time']) < 3600:
+            return self.ohlcv_cache[cache_key]['data']
+
         ticker = yf.Ticker(symbol)
-        return ticker.history(period=period, interval=interval)
+        df = ticker.history(period=period, interval=interval)
+        self.ohlcv_cache[cache_key] = {'data': df, 'time': now}
+        return df
 
     def get_current_price(self, symbol: str) -> float:
         now = time.time()
