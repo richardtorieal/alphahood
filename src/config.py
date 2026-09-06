@@ -35,8 +35,11 @@ MAX_OPTIONS_ALLOCATION_PCT = MAX_OPTIONS_ALLOCATION
 STOP_LOSS_HARD_PCT = STOP_LOSS_PCT_MIN  # -5% hard stop
 DAILY_LOSS_LIMIT_PCT = DAILY_LOSS_LIMIT  # -8% circuit breaker
 
+# Robinhood Account
+DEFAULT_ROBINHOOD_ACCOUNT = os.environ.get("ROBINHOOD_ACCOUNT_NUMBER", "831917265")
+
 # Environment Variables
-ROBINHOOD_MCP_URL = os.getenv("ROBINHOOD_MCP_URL", "http://localhost:8000")
+ROBINHOOD_MCP_URL = os.environ.get("ROBINHOOD_MCP_URL", "https://agent.robinhood.com/mcp/trading")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID", "")
