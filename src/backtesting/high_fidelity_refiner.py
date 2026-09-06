@@ -158,12 +158,20 @@ class HighFidelityOptionsRefiner:
                     if current_premium >= pos.entry_option_premium * 1.20:
                         pos.stop_loss_premium = max(pos.stop_loss_premium, current_premium * 0.85)
 
-                hit_stop = current_premium <= pos.stop_loss_premium
-                hit_target = current_premium >= pos.take_profit_premium
-                expired_dte = dte_remaining <= 10  # Exit at 10 DTE to prevent theta decay wipeout
+                # Check momentum before forcing 10 DTE exit
+                rsi_current = float(current_bar.get("RSI_14", 50.0))
+                ema_10_curr = float(current_bar.get("EMA_10", 0.0))
+                ema_50_curr = float(current_bar.get("EMA_50", 0.0))
+                adx_curr = float(current_bar.get("ADX_14", 25.0))
+                strong_momentum = (rsi_current > 55.0) or (ema_10_curr > ema_50_curr and adx_curr > 20.0)
 
-                if hit_stop or hit_target or expired_dte or i == min_len - 2:
-                    raw_exit_premium = pos.stop_loss_premium if hit_stop else (pos.take_profit_premium if hit_target else current_premium)
+                hit_stop = current_premium <= pos.stop_loss_premium
+                hit_target = False  # Uncapped profits! Let winners run via dynamic trailing stop
+                # If strong momentum continues, hold past 10 DTE down to 3 DTE absolute hard floor
+                expired_dte = (dte_remaining <= 3) if strong_momentum else (dte_remaining <= 10)
+
+                if hit_stop or expired_dte or i == min_len - 2:
+                    raw_exit_premium = pos.stop_loss_premium if hit_stop else current_premium
                     exit_premium_net = max(0.01, raw_exit_premium * (1.0 - self.option_spread_pct))
                     exit_proceeds = (exit_premium_net * 100.0 * pos.contracts_count) - (self.contract_fee_dollars * pos.contracts_count)
 
@@ -220,8 +228,8 @@ class HighFidelityOptionsRefiner:
                         cost_per_contract = (entry_premium * 100.0) + self.contract_fee_dollars
 
                         if cash >= cost_per_contract:
-                            # Dynamic relative sizing: max 35% of current total account equity
-                            unrealized_temp = sum([p.shares if hasattr(p, 'shares') else p.total_cost_dollars for p in open_options])
+                            # Dynamic relative sizing: 35% of current equity (no hard $ caps)
+                            unrealized_temp = sum([p.total_cost_dollars for p in open_options])
                             current_equity = cash + unrealized_temp
                             max_trade_alloc = min(cash, current_equity * 0.35)
 
@@ -239,8 +247,8 @@ class HighFidelityOptionsRefiner:
                                     entry_option_premium=entry_premium,
                                     contracts_count=num_contracts,
                                     total_cost_dollars=total_trade_cost,
-                                    stop_loss_premium=entry_premium * 0.75, # -25% option stop
-                                    take_profit_premium=entry_premium * 1.40, # +40% option profit target
+                                    stop_loss_premium=entry_premium * 0.75, # -25% initial option stop
+                                    take_profit_premium=float('inf'), # Uncapped profits! Let winners run
                                     entry_bar_idx=i,
                                     dte_remaining=25,
                                     highest_premium_seen=entry_premium
