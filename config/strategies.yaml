@@ -8,7 +8,7 @@ gamma_scalp:
   min_open_interest: 500
   profit_target_pct: 0.5
   stop_loss_pct: -0.25
-last_refined: '2026-09-06T03:09:56.623539'
+last_refined: '2026-09-06T14:03:51.560148'
 mean_reversion:
   bb_period: 20
   bb_std_dev: 2
@@ -24,7 +24,7 @@ momentum_breakout:
   rsi_threshold: 45
   sma_period: 20
   trailing_stop_atr_multiplier: 2.0
-  volume_multiple: 1.2
+  volume_multiple: 0.8
 primary_options_watchlist:
 - SPY
 - QQQ

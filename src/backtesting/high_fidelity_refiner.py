@@ -102,15 +102,32 @@ class HighFidelityOptionsRefiner:
         entry_stock_price: float,
         entry_option_premium: float,
         days_held: int,
-        delta: float = 0.40,
-        gamma: float = 0.02,
-        theta_daily: float = 0.04
+        strike: float = None,
+        dte_initial: int = 25,
+        sigma: float = 0.25,
+        r: float = 0.045
     ) -> float:
-        """Simulate realistic option premium value using Delta-Gamma-Theta approximation."""
-        delta_s = stock_price - entry_stock_price
-        delta_p = (delta * delta_s) + (0.5 * gamma * (delta_s ** 2)) - (theta_daily * days_held)
-        simulated_premium = max(0.05, entry_option_premium + delta_p)
-        return simulated_premium
+        """Calculate mathematically exact Option Premium using Black-Scholes Model."""
+        import math
+        def norm_cdf(x: float) -> float:
+            return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+        if strike is None:
+            strike = entry_stock_price * 1.02
+
+        dte_remaining = max(0.5, dte_initial - days_held)
+        T = dte_remaining / 365.0
+
+        if T <= 0.002:
+            return max(0.01, max(0.0, stock_price - strike))
+
+        try:
+            d1 = (math.log(stock_price / strike) + (r + 0.5 * (sigma ** 2)) * T) / (sigma * math.sqrt(T))
+            d2 = d1 - (sigma * math.sqrt(T))
+            call_price = (stock_price * norm_cdf(d1)) - (strike * math.exp(-r * T) * norm_cdf(d2))
+            return max(0.05, float(call_price))
+        except Exception:
+            return max(0.01, max(0.0, stock_price - strike))
 
     def run_options_backtest(
         self,
@@ -146,9 +163,9 @@ class HighFidelityOptionsRefiner:
                 days_held = i - pos.entry_bar_idx
                 dte_remaining = max(0, pos.dte_remaining - days_held)
 
-                # Estimate current option premium
+                # Estimate current option premium via Black-Scholes
                 current_premium = self.simulate_option_premium(
-                    stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held
+                    stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held, strike=pos.strike
                 )
 
                 # Update highest premium seen & dynamic trailing stop
@@ -262,7 +279,7 @@ class HighFidelityOptionsRefiner:
             for pos in open_options:
                 days_held = i - pos.entry_bar_idx
                 stock_price = float(self.preloaded_data[pos.symbol].iloc[i]["Close"])
-                prem = self.simulate_option_premium(stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held)
+                prem = self.simulate_option_premium(stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held, strike=pos.strike)
                 unrealized_options += prem * 100.0 * pos.contracts_count
 
             total_equity = cash + unrealized_options
