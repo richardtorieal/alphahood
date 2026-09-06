@@ -332,12 +332,21 @@ class AlphaHoodAgent:
             name=f"Strategy Scan ({STRATEGY_SCAN_TIME})",
         )
 
-        # Daily summary at market close (4:00 PM CT)
+        # Daily summary at market close (4:05 PM CT)
         self.scheduler.add_job(
             self.run_daily_summary,
             CronTrigger(hour=16, minute=5),
             id="daily_summary",
             name="Daily Summary (4:05 PM)",
+        )
+
+        # Nightly strategy refinement loop at 1:00 AM CT
+        from .backtesting.nightly_refiner import NightlyRefiner
+        self.scheduler.add_job(
+            NightlyRefiner().run_refinement_cycle,
+            CronTrigger(hour=1, minute=0),
+            id="nightly_refine",
+            name="Nightly Strategy Refinement (1:00 AM)",
         )
 
         log.info("📅 Scheduler configured:")
@@ -367,6 +376,7 @@ def main():
     parser.add_argument("--monitor", action="store_true", help="Start position monitoring loop")
     parser.add_argument("--review", action="store_true", help="Run LLM trade review immediately")
     parser.add_argument("--backtest", action="store_true", help="Run backtests on all strategies")
+    parser.add_argument("--nightly-refine", action="store_true", help="Run nightly strategy backtest & parameter refinement loop")
     parser.add_argument("--paper", action="store_true", default=True, help="Paper trading mode (default)")
     parser.add_argument("--live", action="store_true", help="Live trading mode (⚠️ real money)")
     parser.add_argument("--daemon", action="store_true", help="Start full daemon with all scheduled tasks")
@@ -376,6 +386,11 @@ def main():
     if args.link_robinhood:
         from .auth_setup import run_oauth_flow
         run_oauth_flow()
+        return
+
+    if args.nightly_refine:
+        from .backtesting.nightly_refiner import NightlyRefiner
+        NightlyRefiner().run_refinement_cycle()
         return
 
     paper_mode = not args.live

@@ -32,9 +32,9 @@ class GammaScalpStrategy(BaseStrategy):
             if not data:
                 continue
 
-            iv_rank = data.get('iv_rank', 100)
-            momentum_bias = data.get('momentum_bias', 0) # e.g. 1 for LONG, -1 for SHORT
-            options_chain = data.get('options_chain', [])
+            iv_rank = data.get('iv_rank', 20)
+            rsi = data.get('rsi', 50)
+            momentum_bias = 1 if rsi > 50 else 0
             
             if iv_rank < self.max_iv_rank and momentum_bias != 0:
                 # Find optimal option

@@ -38,6 +38,10 @@ class ExitSignal:
 class BaseStrategy(ABC):
     """Abstract base class for trading strategies."""
     
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__.replace("Strategy", "")
+
     @abstractmethod
     def generate_signals(self, symbols: list[str], market_data: Dict[str, Any]) -> list[Signal]:
         """

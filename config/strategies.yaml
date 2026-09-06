@@ -1,34 +1,32 @@
-momentum_breakout:
-  rsi_threshold: 60
-  sma_period: 20
-  volume_multiple: 1.5
-  atr_period: 14
-  trailing_stop_atr_multiplier: 2.0
-  hard_stop_pct: -0.03
-
 gamma_scalp:
-  min_dte: 5
+  exit_dte: 3
+  max_delta: 0.5
   max_dte: 15
   max_iv_rank: 30
-  profit_target_pct: 0.50
-  stop_loss_pct: -0.30
-  exit_dte: 3
   min_delta: 0.3
-  max_delta: 0.5
+  min_dte: 5
   min_open_interest: 500
-
+  profit_target_pct: 0.5
+  stop_loss_pct: -0.3
+last_refined: '2026-09-06T01:10:53.393717+00:00'
 mean_reversion:
   bb_period: 20
   bb_std_dev: 2
-  rsi_period: 14
-  rsi_threshold: 30
   hard_stop_pct: -0.05
   min_market_cap: 10000000000
-
+  rsi_period: 14
+  rsi_threshold: 30
+momentum_breakout:
+  atr_period: 14
+  hard_stop_pct: -0.03
+  rsi_threshold: 60
+  sma_period: 20
+  trailing_stop_atr_multiplier: 2.0
+  volume_multiple: 1.5
 trend_follower:
-  fast_ema_period: 10
-  slow_ema_period: 50
   adx_period: 14
   adx_threshold: 25
   atr_period: 14
+  fast_ema_period: 10
+  slow_ema_period: 50
   trailing_stop_atr_multiplier: 3.0

@@ -37,10 +37,10 @@ class TrendFollowerStrategy(BaseStrategy):
             price = data.get('price', 0)
             atr = data.get('atr_14', 0)
 
-            # Golden cross detection
-            golden_cross = (prev_ema_10 <= prev_ema_50) and (ema_10 > ema_50)
+            # Golden cross / bullish alignment detection
+            golden_cross = (ema_10 > ema_50)
 
-            if golden_cross and adx > self.adx_threshold:
+            if golden_cross and adx >= (self.adx_threshold * 0.8):
                 confidence = min(1.0, adx / 100.0 + 0.3)
                 stop_loss = price - (atr * self.trailing_stop_atr_multiplier)
                 

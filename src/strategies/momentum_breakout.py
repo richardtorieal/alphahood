@@ -37,8 +37,8 @@ class MomentumBreakoutStrategy(BaseStrategy):
             # Simple previous price tracking check in reality, simplified here
             prev_price = data.get('prev_price', price)
 
-            # Price crossing above SMA and conditions met
-            if rsi > self.rsi_threshold and price > sma_20 and prev_price <= sma_20 and volume > (self.volume_multiple * avg_volume_20):
+            # Price above SMA, RSI momentum confirmed, volume expansion
+            if rsi > self.rsi_threshold and price > sma_20 and volume >= (self.volume_multiple * 0.9 * avg_volume_20):
                 confidence = min(1.0, (rsi / 100.0) * (volume / avg_volume_20) * 0.5)
                 stop_loss = max(price - (atr * self.trailing_stop_atr_multiplier), price * (1 + self.hard_stop_pct))
                 take_profit = price + (price - stop_loss) * 2.0  # 2:1 R/R

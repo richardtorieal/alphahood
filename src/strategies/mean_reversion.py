@@ -35,8 +35,8 @@ class MeanReversionStrategy(BaseStrategy):
 
             rsi = data.get('rsi', 50)
             price = data.get('price', 0)
-            bb_lower = data.get('bb_lower', 0)
-            bb_upper = data.get('bb_upper', 0)
+            bb_lower = data.get('bollinger_lower', data.get('bb_lower', 0))
+            bb_upper = data.get('bollinger_upper', data.get('bb_upper', 0))
             sma_20 = data.get('sma_20', 0)
             
             # Squeeze detection: bandwidth is narrow
