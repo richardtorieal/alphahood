@@ -123,7 +123,9 @@ def run_oauth_flow():
         "client_id": client_id,
         "redirect_uri": REDIRECT_URI,
         "code_challenge": code_challenge,
-        "code_challenge_method": "S256"
+        "code_challenge_method": "S256",
+        "scope": "internal",
+        "resource": "https://agent.robinhood.com/mcp/trading"
     }
     auth_url = f"{AUTHORIZATION_ENDPOINT}?{urllib.parse.urlencode(auth_params)}"
     
