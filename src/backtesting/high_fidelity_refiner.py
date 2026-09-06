@@ -220,7 +220,12 @@ class HighFidelityOptionsRefiner:
                         cost_per_contract = (entry_premium * 100.0) + self.contract_fee_dollars
 
                         if cash >= cost_per_contract:
-                            num_contracts = int(min(cash, self.max_option_cost_per_trade) // cost_per_contract)
+                            # Dynamic relative sizing: max 35% of current total account equity
+                            unrealized_temp = sum([p.shares if hasattr(p, 'shares') else p.total_cost_dollars for p in open_options])
+                            current_equity = cash + unrealized_temp
+                            max_trade_alloc = min(cash, current_equity * 0.35)
+
+                            num_contracts = int(max_trade_alloc // cost_per_contract)
                             num_contracts = max(1, num_contracts)
                             total_trade_cost = num_contracts * cost_per_contract
 
