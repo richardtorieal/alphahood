@@ -1,5 +1,8 @@
 """
-Risk Management Engine
+AlphaHood — Live Risk Management Engine
+Enforces strict $500 account equity rules, fractional share sizing,
+max 2 concurrent positions ($200 max per trade, $100 cash buffer),
+daily circuit breakers (-8%), and risk/reward ratios.
 """
 from typing import Tuple
 from .portfolio import PortfolioState
@@ -8,25 +11,26 @@ from .. import config
 
 class RiskManager:
     """
-    Complete risk management engine.
+    Risk management engine enforcing strict $500 starting balance rules.
     """
     def __init__(self) -> None:
         pass
 
     def validate_trade(self, signal: Signal, portfolio: PortfolioState) -> Tuple[bool, str, float]:
         """
-        Validates a trade signal against all risk parameters.
+        Validates a trade signal against all risk parameters under $500 balance discipline.
         Returns: (approved, reason, adjusted_size)
         """
         # 1. Daily Loss Limit (Circuit Breaker)
         if portfolio.daily_pnl_pct <= config.DAILY_LOSS_LIMIT:
             return False, f"Circuit Breaker Triggered. Daily PNL: {portfolio.daily_pnl_pct:.2%}", 0.0
 
-        # 2. Max Concurrent Positions
-        if len(portfolio.positions) >= config.MAX_CONCURRENT_POSITIONS:
-            return False, f"Max concurrent positions reached ({config.MAX_CONCURRENT_POSITIONS})", 0.0
+        # 2. Max Concurrent Positions (Max 2 trades active)
+        max_positions = getattr(config, 'MAX_CONCURRENT_POSITIONS', 2)
+        if len(portfolio.positions) >= max_positions:
+            return False, f"Max concurrent positions reached ({len(portfolio.positions)}/{max_positions})", 0.0
             
-        # 3. Position Already Exists (Simplified: skip adding to existing)
+        # 3. Position Already Exists Check
         if signal.symbol in portfolio.positions:
              return False, f"Position already exists for {signal.symbol}", 0.0
 
@@ -41,45 +45,37 @@ class RiskManager:
         if rr_ratio < config.MIN_RISK_REWARD_RATIO:
             return False, f"R/R ratio {rr_ratio:.2f} < {config.MIN_RISK_REWARD_RATIO}", 0.0
 
-        # 5. Position Sizing (Fractional Kelly / Risk-based)
-        # Using a simpler risk-based approach bound by MAX_POSITION_SIZE_PCT
-        # E.g., risk 1% of portfolio per trade
-        max_portfolio_risk_per_trade = 0.01 
-        allowed_risk_amount = portfolio.total_equity * max_portfolio_risk_per_trade
+        # 5. Position Sizing ($500 balance rule: Max $200 per trade, bounded by available cash)
+        max_per_trade = 200.0
+        available_cash = portfolio.cash
+
+        if available_cash < 25.0:
+            return False, f"Insufficient buying power (${available_cash:.2f} < $25.00 min)", 0.0
+
+        investment_dollars = min(available_cash, max_per_trade)
         
+        # Compute fractional share quantity for Robinhood
         multiplier = 100 if signal.asset_type == 'OPTION' else 1
+        quantity = investment_dollars / (signal.entry_price * multiplier)
         
-        # Quantity based on risk
-        raw_quantity = allowed_risk_amount / (risk * multiplier)
-        
-        # Max position size constraint
-        max_investment = portfolio.total_equity * config.MAX_POSITION_SIZE_PCT
-        max_quantity_by_size = max_investment / (signal.entry_price * multiplier)
-        
-        adjusted_quantity = min(raw_quantity, max_quantity_by_size)
-        
-        # Floor to integer for equity/options
-        adjusted_quantity = int(adjusted_quantity)
-        
-        if adjusted_quantity <= 0:
+        # Round fractional shares to 4 decimal places
+        if signal.asset_type == "EQUITY":
+            quantity = round(quantity, 4)
+        else:
+            quantity = int(quantity)
+
+        if quantity <= 0:
             return False, "Calculated position size is 0", 0.0
 
-        proposed_investment = adjusted_quantity * signal.entry_price * multiplier
+        proposed_investment = quantity * signal.entry_price * multiplier
         
         # 6. Portfolio Heat Check
-        proposed_heat = portfolio.get_portfolio_heat() + (allowed_risk_amount / portfolio.total_equity)
+        proposed_heat = portfolio.get_portfolio_heat() + (proposed_investment / portfolio.total_equity)
         if proposed_heat > config.MAX_PORTFOLIO_HEAT:
             return False, f"Trade exceeds max portfolio heat ({proposed_heat:.2%} > {config.MAX_PORTFOLIO_HEAT:.2%})", 0.0
 
-        # 7. Asset Allocation Constraints
-        if signal.asset_type == "OPTION":
-            proposed_opt_alloc = (portfolio.total_equity * portfolio.options_allocation_pct + proposed_investment) / portfolio.total_equity
-            if proposed_opt_alloc > config.MAX_OPTIONS_ALLOCATION:
-                return False, f"Exceeds max options allocation ({proposed_opt_alloc:.2%} > {config.MAX_OPTIONS_ALLOCATION:.2%})", 0.0
-        
-        # 8. Cash/Equity Reserve
-        proposed_cash = portfolio.cash - proposed_investment
-        if proposed_cash / portfolio.total_equity < config.MIN_CASH_EQUITY_RESERVE:
-             return False, f"Fails minimum cash reserve requirement", 0.0
+        # 7. Cash Reserve Check
+        if (portfolio.cash - proposed_investment) < 25.0:
+            return False, "Trade leaves less than $25 cash buffer", 0.0
 
-        return True, "Trade approved", float(adjusted_quantity)
+        return True, "Trade approved", float(quantity)

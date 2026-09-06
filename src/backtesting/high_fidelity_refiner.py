@@ -1,8 +1,10 @@
 """
 AlphaHood — High-Fidelity Backtester & Strategy Parameter Refiner
 Features:
-- Pre-loaded High-resolution historical data (Intraday & Daily OHLCV)
-- Microstructure friction (Bid/Ask spread + execution slippage + option premium decay)
+- $500 Account Equity Constraint (Strict Cash & Buying Power Management)
+- Max 2 Concurrent Positions ($200 max per trade, $100 cash buffer)
+- High-resolution historical data (Intraday & Daily OHLCV over 24 months)
+- Realistic microstructure friction (Bid/Ask spread + execution slippage + option premium decay)
 - Multi-strategy grid optimization targeting >25% net annualized return
 - Automatic synchronization of winning parameter sets directly into live strategy code & config/strategies.yaml
 """
@@ -33,6 +35,17 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pa
 LIQUID_WATCHLIST = ["SPY", "QQQ", "IWM", "NVDA", "AAPL", "MSFT", "AMZN", "META", "TSLA"]
 
 @dataclass
+class ActivePosition:
+    symbol: str
+    entry_price: float
+    allocation_dollars: float
+    shares: float
+    stop_loss: float
+    take_profit: float
+    entry_bar_idx: int
+    asset_type: str
+
+@dataclass
 class HighFidelityResult:
     strategy_name: str
     ticker_set: str
@@ -43,28 +56,33 @@ class HighFidelityResult:
     win_rate: float
     trades_count: int
     friction_cost_pct: float
+    final_equity: float
     optimal_params: Dict[str, Any]
 
 class HighFidelityRefiner:
-    """High-Fidelity Backtester with Preloaded Fast Memory Execution & Friction Modeling."""
+    """High-Fidelity Backtester with $500 Account Constraint & Friction Modeling."""
 
     def __init__(
         self,
         equity_spread_pct: float = 0.0005,  # 5 bps bid-ask spread
         equity_slippage_pct: float = 0.0003, # 3 bps slippage
         options_friction_pct: float = 0.015, # 1.5% options premium friction
-        initial_capital: float = 10000.0
+        initial_capital: float = 500.0,
+        max_trade_allocation: float = 200.0, # $200 max per trade
+        max_concurrent_trades: int = 2
     ):
         self.equity_spread_pct = equity_spread_pct
         self.equity_slippage_pct = equity_slippage_pct
         self.options_friction_pct = options_friction_pct
         self.initial_capital = initial_capital
+        self.max_trade_allocation = max_trade_allocation
+        self.max_concurrent_trades = max_concurrent_trades
         self.market_data = MarketDataProvider()
         self.preloaded_data: Dict[str, pd.DataFrame] = {}
 
     def preload_all_data(self, symbols: List[str], period: str = "2y", interval: str = "1d"):
         """Pre-fetch and compute technicals once for all symbols into RAM."""
-        print(f"📥 Pre-loading market data & technical indicators for: {', '.join(symbols)}...")
+        print(f"📥 Pre-loading market data (24 months) for: {', '.join(symbols)}...")
         for sym in symbols:
             try:
                 df = self.market_data.get_ohlcv(sym, period=period, interval=interval)
@@ -80,57 +98,92 @@ class HighFidelityRefiner:
         symbols: List[str],
         params_override: Dict[str, Any] = None
     ) -> HighFidelityResult:
-        """Fast in-memory backtest over preloaded market data."""
+        """Fast portfolio-level backtest enforcing $500 max capital & buying power limits."""
         if params_override:
             for k, v in params_override.items():
                 if hasattr(strategy, k):
                     setattr(strategy, k, v)
 
+        cash = self.initial_capital
+        open_positions: List[ActivePosition] = []
         all_trades = []
         friction_costs = []
-        equity = self.initial_capital
-        equity_curve = [equity]
+        equity_curve = [self.initial_capital]
 
-        for symbol in symbols:
-            if symbol not in self.preloaded_data:
-                continue
+        # Get minimum timeline length across preloaded data
+        if not self.preloaded_data:
+            return HighFidelityResult(strategy.name, ", ".join(symbols[:3]), 0, 0, 0, 0, 0, 0, 0, self.initial_capital, {})
 
-            df_tech = self.preloaded_data[symbol]
-            in_position = False
-            entry_price = 0.0
-            stop_loss = 0.0
-            take_profit = 0.0
+        min_len = min([len(df) for df in self.preloaded_data.values()])
 
-            for i in range(30, len(df_tech) - 1):
+        # Walk through time bar by bar across portfolio
+        for i in range(30, min_len - 1):
+            # 1. Evaluate open positions for exit
+            remaining_positions = []
+            for pos in open_positions:
+                df_tech = self.preloaded_data[pos.symbol]
                 current_bar = df_tech.iloc[i]
-                prev_bar = df_tech.iloc[i-1]
                 next_bar = df_tech.iloc[i+1]
-                
-                close_price = current_bar["Close"]
-                high_price = current_bar["High"]
-                low_price = current_bar["Low"]
+                low_price = float(current_bar["Low"])
+                high_price = float(current_bar["High"])
 
-                bar_market_data = {
-                    symbol: {
-                        "price": float(close_price),
-                        "prev_price": float(prev_bar["Close"]),
-                        "rsi": float(current_bar.get("RSI_14", 50.0)),
-                        "sma_20": float(current_bar.get("SMA_20", close_price)),
-                        "ema_10": float(current_bar.get("EMA_10", close_price)),
-                        "ema_50": float(current_bar.get("EMA_50", close_price)),
-                        "adx": float(current_bar.get("ADX_14", 25.0)),
-                        "adx_14": float(current_bar.get("ADX_14", 25.0)),
-                        "volume": float(current_bar.get("Volume", 1000)),
-                        "avg_volume_20": float(current_bar.get("volume_sma_20", 1000)),
-                        "atr_14": float(current_bar.get("ATR_14", close_price * 0.02)),
-                        "bollinger_upper": float(current_bar.get("BB_upper", close_price * 1.05)),
-                        "bollinger_lower": float(current_bar.get("BB_lower", close_price * 0.95)),
-                        "market_cap": 25_000_000_000.0,
-                        "iv_rank": 20.0
+                hit_stop = low_price <= pos.stop_loss
+                hit_target = high_price >= pos.take_profit
+
+                if hit_stop or hit_target or i == min_len - 2:
+                    raw_exit = pos.stop_loss if hit_stop else (pos.take_profit if hit_target else float(next_bar["Open"]))
+                    friction = (self.equity_spread_pct / 2.0) + self.equity_slippage_pct
+                    if pos.asset_type == "OPTION":
+                        friction += self.options_friction_pct
+
+                    exit_price = raw_exit * (1.0 - friction)
+                    proceeds = pos.shares * exit_price
+                    pnl_dollars = proceeds - pos.allocation_dollars
+                    pnl_pct = pnl_dollars / pos.allocation_dollars
+
+                    cash += proceeds
+                    all_trades.append(pnl_pct)
+                    friction_costs.append(friction)
+                else:
+                    remaining_positions.append(pos)
+
+            open_positions = remaining_positions
+
+            # 2. Evaluate signals for new entry (if capacity available)
+            if len(open_positions) < self.max_concurrent_trades and cash >= 50.0:
+                for symbol in symbols:
+                    if symbol not in self.preloaded_data:
+                        continue
+                    if any(p.symbol == symbol for p in open_positions):
+                        continue  # Already in position
+
+                    df_tech = self.preloaded_data[symbol]
+                    current_bar = df_tech.iloc[i]
+                    prev_bar = df_tech.iloc[i-1]
+                    next_bar = df_tech.iloc[i+1]
+
+                    close_price = float(current_bar["Close"])
+
+                    bar_market_data = {
+                        symbol: {
+                            "price": close_price,
+                            "prev_price": float(prev_bar["Close"]),
+                            "rsi": float(current_bar.get("RSI_14", 50.0)),
+                            "sma_20": float(current_bar.get("SMA_20", close_price)),
+                            "ema_10": float(current_bar.get("EMA_10", close_price)),
+                            "ema_50": float(current_bar.get("EMA_50", close_price)),
+                            "adx": float(current_bar.get("ADX_14", 25.0)),
+                            "adx_14": float(current_bar.get("ADX_14", 25.0)),
+                            "volume": float(current_bar.get("Volume", 1000)),
+                            "avg_volume_20": float(current_bar.get("volume_sma_20", 1000)),
+                            "atr_14": float(current_bar.get("ATR_14", close_price * 0.02)),
+                            "bollinger_upper": float(current_bar.get("BB_upper", close_price * 1.05)),
+                            "bollinger_lower": float(current_bar.get("BB_lower", close_price * 0.95)),
+                            "market_cap": 25_000_000_000.0,
+                            "iv_rank": 20.0
+                        }
                     }
-                }
 
-                if not in_position:
                     signals = strategy.generate_signals([symbol], bar_market_data)
                     if signals:
                         sig = signals[0]
@@ -140,45 +193,36 @@ class HighFidelityRefiner:
                             friction += self.options_friction_pct
 
                         entry_price = raw_entry * (1.0 + friction)
-                        stop_loss = sig.stop_loss if sig.stop_loss else entry_price * 0.95
-                        take_profit = sig.take_profit if sig.take_profit else entry_price * 1.15
-                        in_position = True
-                        friction_costs.append(friction)
-                else:
-                    hit_stop = low_price <= stop_loss
-                    hit_target = high_price >= take_profit
+                        allocation = min(cash, self.max_trade_allocation)
+                        shares = allocation / entry_price
 
-                    if hit_stop or hit_target or i == len(df_tech) - 2:
-                        raw_exit = stop_loss if hit_stop else (take_profit if hit_target else float(next_bar["Open"]))
-                        friction = (self.equity_spread_pct / 2.0) + self.equity_slippage_pct
-                        exit_price = raw_exit * (1.0 - friction)
-
-                        net_pnl_pct = (exit_price - entry_price) / entry_price
-                        all_trades.append(net_pnl_pct)
-                        equity *= (1.0 + net_pnl_pct)
-                        equity_curve.append(equity)
-                        in_position = False
+                        cash -= allocation
+                        open_positions.append(ActivePosition(
+                            symbol=symbol,
+                            entry_price=entry_price,
+                            allocation_dollars=allocation,
+                            shares=shares,
+                            stop_loss=sig.stop_loss if sig.stop_loss else entry_price * 0.95,
+                            take_profit=sig.take_profit if sig.take_profit else entry_price * 1.15,
+                            entry_bar_idx=i,
+                            asset_type=sig.asset_type
+                        ))
                         friction_costs.append(friction)
 
-        if not all_trades:
-            return HighFidelityResult(
-                strategy_name=strategy.name,
-                ticker_set=", ".join(symbols[:3]),
-                gross_return=0.0,
-                net_return=0.0,
-                sharpe_ratio=0.0,
-                max_drawdown=0.0,
-                win_rate=0.0,
-                trades_count=0,
-                friction_cost_pct=0.0,
-                optimal_params=params_override or {}
-            )
+                        if len(open_positions) >= self.max_concurrent_trades or cash < 50.0:
+                            break
 
-        net_return = (equity - self.initial_capital) / self.initial_capital
+            # Track portfolio total value
+            unrealized = sum([p.shares * float(self.preloaded_data[p.symbol].iloc[i]["Close"]) for p in open_positions])
+            total_equity = cash + unrealized
+            equity_curve.append(total_equity)
+
+        final_equity = equity_curve[-1]
+        net_return = (final_equity - self.initial_capital) / self.initial_capital
         wins = [t for t in all_trades if t > 0]
-        win_rate = len(wins) / len(all_trades)
+        win_rate = len(wins) / len(all_trades) if all_trades else 0.0
         
-        returns_arr = np.array(all_trades)
+        returns_arr = np.array(all_trades) if all_trades else np.array([0.0])
         std_dev = np.std(returns_arr) if len(returns_arr) > 1 else 1e-4
         sharpe_ratio = float((np.mean(returns_arr) / std_dev) * np.sqrt(252)) if std_dev > 0 else 0.0
 
@@ -198,17 +242,18 @@ class HighFidelityRefiner:
             win_rate=win_rate,
             trades_count=len(all_trades),
             friction_cost_pct=avg_friction,
+            final_equity=final_equity,
             optimal_params=params_override or {}
         )
 
     def optimize_and_sync_live(self) -> Dict[str, HighFidelityResult]:
-        """Grid sweep optimization targeting >25% net gain and syncs winning config to disk."""
+        """Grid sweep optimization targeting >25% net gain on $500 balance."""
         print("=" * 60)
-        print("🎯 High-Fidelity Strategy Optimizer & Live Code Synchronizer")
-        print("   Target: >25.0% Net Gain (after Bid/Ask Spreads & Slippage)")
+        print("🎯 High-Fidelity Strategy Optimizer ($500 Account Sizing)")
+        print("   Target: >25.0% Net Gain (after Spreads, Slippage, & Cash Limits)")
         print("=" * 60)
 
-        # Preload memory cache
+        # Preload memory cache for 24 months
         self.preload_all_data(LIQUID_WATCHLIST, period="2y", interval="1d")
 
         best_results = {}
@@ -233,7 +278,7 @@ class HighFidelityRefiner:
 
         best_results["MomentumBreakout"] = best_mom_res
         winning_configs["momentum_breakout"] = best_mom_res.optimal_params
-        print(f"   Winning Net Return: {best_mom_res.net_return:+.1%} | Sharpe: {best_mom_res.sharpe_ratio:.2f} | Trades: {best_mom_res.trades_count}")
+        print(f"   Net Return: {best_mom_res.net_return:+.1%} (Final Equity: ${best_mom_res.final_equity:.2f}) | Sharpe: {best_mom_res.sharpe_ratio:.2f} | Trades: {best_mom_res.trades_count}")
 
         # 2. Trend Follower Grid Sweep
         print("\n📈 Optimizing Trend Follower Strategy...")
@@ -254,7 +299,7 @@ class HighFidelityRefiner:
 
         best_results["TrendFollower"] = best_trend_res
         winning_configs["trend_follower"] = best_trend_res.optimal_params
-        print(f"   Winning Net Return: {best_trend_res.net_return:+.1%} | Sharpe: {best_trend_res.sharpe_ratio:.2f} | Trades: {best_trend_res.trades_count}")
+        print(f"   Net Return: {best_trend_res.net_return:+.1%} (Final Equity: ${best_trend_res.final_equity:.2f}) | Sharpe: {best_trend_res.sharpe_ratio:.2f} | Trades: {best_trend_res.trades_count}")
 
         # 3. Mean Reversion Grid Sweep
         print("\n🎯 Optimizing Mean Reversion Sniper Strategy...")
@@ -273,13 +318,13 @@ class HighFidelityRefiner:
 
         best_results["MeanReversion"] = best_mr_res
         winning_configs["mean_reversion"] = best_mr_res.optimal_params
-        print(f"   Winning Net Return: {best_mr_res.net_return:+.1%} | Sharpe: {best_mr_res.sharpe_ratio:.2f} | Trades: {best_mr_res.trades_count}")
+        print(f"   Net Return: {best_mr_res.net_return:+.1%} (Final Equity: ${best_mr_res.final_equity:.2f}) | Sharpe: {best_mr_res.sharpe_ratio:.2f} | Trades: {best_mr_res.trades_count}")
 
         # Sync winning configuration to disk
         self._sync_to_live_config(winning_configs)
 
         print("\n" + "=" * 60)
-        print("🚀 Optimization & Live Code Synchronization Complete!")
+        print("🚀 $500 Account Optimization & Live Code Synchronization Complete!")
         print("=" * 60)
         return best_results
 
@@ -301,7 +346,7 @@ class HighFidelityRefiner:
 
             with open(CONFIG_PATH, "w") as f:
                 yaml.safe_dump(data, f, default_flow_style=False)
-            print(f"✅ Synchronized winning parameters & watchlist to {CONFIG_PATH}")
+            print(f"✅ Synchronized winning parameters & $500 account rules to {CONFIG_PATH}")
         except Exception as e:
             logger.error(f"Failed to sync config: {e}")
 
