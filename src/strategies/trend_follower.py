@@ -22,6 +22,8 @@ class TrendFollowerStrategy(BaseStrategy):
         self.atr_period = get_strategy_param('trend_follower', 'atr_period', 14)
         self.trailing_stop_atr_multiplier = get_strategy_param('trend_follower', 'trailing_stop_atr_multiplier', 3.0)
 
+        self.asset_type = get_strategy_param('trend_follower', 'asset_type', 'OPTION')
+
     def generate_signals(self, symbols: list[str], market_data: Dict[str, Any]) -> list[Signal]:
         signals = []
         for symbol in symbols:
@@ -51,9 +53,9 @@ class TrendFollowerStrategy(BaseStrategy):
                     confidence=confidence,
                     entry_price=price,
                     stop_loss=stop_loss,
-                    take_profit=price * 2, # No fixed take profit, riding the trend, but giving a placeholder
+                    take_profit=price * 1.5,
                     order_type="MARKET",
-                    asset_type="EQUITY"
+                    asset_type=self.asset_type
                 ))
         return signals
 
