@@ -21,6 +21,7 @@ import yfinance as yf
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.data.market_data import MarketDataProvider
+from src.data.options_data import OptionsDXParser
 from src.strategies.momentum_breakout import MomentumBreakoutStrategy
 from src.strategies.gamma_scalp import GammaScalpStrategy
 from src.strategies.mean_reversion import MeanReversionStrategy
@@ -83,6 +84,8 @@ class HighFidelityOptionsRefiner:
         self.max_concurrent_options = max_concurrent_options
         self.market_data = MarketDataProvider()
         self.preloaded_data: Dict[str, pd.DataFrame] = {}
+        self.options_parser = OptionsDXParser()
+        self.options_parser.load_data()
 
     def preload_all_data(self, symbols: List[str], period: str = "2y", interval: str = "1d"):
         """Pre-fetch and compute technicals once for all symbols into RAM."""
@@ -105,9 +108,16 @@ class HighFidelityOptionsRefiner:
         strike: float = None,
         dte_initial: int = 25,
         sigma: float = 0.25,
-        r: float = 0.045
+        r: float = 0.045,
+        symbol: str = None,
+        quote_date: pd.Timestamp = None
     ) -> float:
-        """Calculate mathematically exact Option Premium using Black-Scholes Model."""
+        """Calculate mathematically exact Option Premium using Black-Scholes Model, or use real OptionsDX data if available."""
+        if symbol and quote_date and self.options_parser.loaded:
+            real_premium = self.options_parser.get_premium(symbol, quote_date, strike, target_dte=max(1, dte_initial - days_held))
+            if real_premium is not None:
+                return real_premium
+                
         import math
         def norm_cdf(x: float) -> float:
             return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
@@ -160,12 +170,14 @@ class HighFidelityOptionsRefiner:
                 next_bar = df_tech.iloc[i+1]
 
                 stock_price = float(current_bar["Close"])
+                quote_date = df_tech.index[i]
                 days_held = i - pos.entry_bar_idx
                 dte_remaining = max(0, pos.dte_remaining - days_held)
 
-                # Estimate current option premium via Black-Scholes
+                # Estimate current option premium via Black-Scholes or real data
                 current_premium = self.simulate_option_premium(
-                    stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held, strike=pos.strike
+                    stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held, strike=pos.strike,
+                    symbol=pos.symbol, quote_date=quote_date
                 )
 
                 # Update highest premium seen & dynamic trailing stop
@@ -279,7 +291,7 @@ class HighFidelityOptionsRefiner:
             for pos in open_options:
                 days_held = i - pos.entry_bar_idx
                 stock_price = float(self.preloaded_data[pos.symbol].iloc[i]["Close"])
-                prem = self.simulate_option_premium(stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held, strike=pos.strike)
+                prem = self.simulate_option_premium(stock_price, pos.entry_stock_price, pos.entry_option_premium, days_held, strike=pos.strike, symbol=pos.symbol, quote_date=df_tech.index[-1])
                 unrealized_options += prem * 100.0 * pos.contracts_count
 
             total_equity = cash + unrealized_options
